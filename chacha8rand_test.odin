@@ -164,7 +164,7 @@ benchmark_rng :: proc(t: ^testing.T) {
 	table.init(&tbl)
 	defer table.destroy(&tbl)
 
-	table.caption(&tbl, "CSPRNG")
+	table.caption(&tbl, "RNG")
 	table.aligned_header_of_values(&tbl, .Right, "Algorithm", "Size", "Time", "Throughput")
 
 	st: Chacha8Rand_State
