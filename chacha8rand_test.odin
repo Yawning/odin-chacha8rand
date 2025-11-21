@@ -1,7 +1,19 @@
 package chacha8rand
 
+import "base:runtime"
+
+import "core:bytes"
+import "core:encoding/endian"
+import "core:fmt"
+import "core:log"
 import "core:math/rand"
+import "core:strings"
 import "core:testing"
+import "core:text/table"
+import "core:time"
+
+@(private = "file")
+ITERS :: 10000000
 
 @(private = "file")
 SAMPLE_SEED : string : "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
@@ -113,4 +125,101 @@ chacha8rand_u64s :: proc(t: ^testing.T) {
 		actual := rand.uint64()
 		testing.expectf(t, expected == actual, "[%d]: got %x (expected %x)", i, actual, expected)
 	}
+}
+
+@(test)
+chacha8rand_bytes :: proc(t: ^testing.T) {
+	st: Chacha8Rand_State
+	context.random_generator = chacha8rand_random_generator(&st)
+
+	// Test a massive bulk read.
+	rand.reset_bytes(transmute([]byte)(SAMPLE_SEED))
+	buf := make([]byte, len(SAMPLE_OUTPUT) * size_of(u64), context.temp_allocator)
+	n := rand.read(buf)
+	testing.expectf(t, n == len(buf), "insufficient output: got %d (expected %d)", n, len(buf))
+
+	for expected, i in SAMPLE_OUTPUT {
+		actual, _ := endian.get_u64(buf[i*8:], .Little)
+		testing.expectf(t, expected == actual, "[%d]: got %x (expected %x)", i, actual, expected)
+	}
+
+	// Test that the internal state always advances by a multiple of
+	// 8-bytes.
+	rand.reset_bytes(transmute([]byte)(SAMPLE_SEED))
+	tmp: [8]byte
+	off: int
+	for i := 1; i < 8; i += 1 {
+		_ = rand.read(tmp[:i])
+		testing.expect(t, bytes.equal(tmp[:i], buf[off:off+i]))
+		off += 8
+	}
+}
+
+// u64, N[0,1000)
+@(test)
+benchmark_rng :: proc(t: ^testing.T) {
+	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+
+	tbl: table.Table
+	table.init(&tbl)
+	defer table.destroy(&tbl)
+
+	table.caption(&tbl, "CSPRNG")
+	table.aligned_header_of_values(&tbl, .Right, "Algorithm", "Size", "Time", "Throughput")
+
+	st: Chacha8Rand_State
+	context.random_generator = chacha8rand_random_generator(&st)
+	rand.reset_bytes(transmute([]byte)(SAMPLE_SEED))
+	_benchmark_u64(t, &tbl, "chacha8rand")
+
+	context.random_generator = rand.default_random_generator()
+	_benchmark_u64(t, &tbl, "default")
+
+	log_table(&tbl)
+}
+
+@(private = "file")
+_benchmark_u64 :: proc(t: ^testing.T, tbl: ^table.Table, algo_name: string) {
+	options := &time.Benchmark_Options{
+		rounds = ITERS,
+		bytes = 8,
+		setup = nil,
+		bench = proc(options: ^time.Benchmark_Options, allocator: runtime.Allocator) -> (err: time.Benchmark_Error){
+			sum: u64
+			for _ in 0 ..= options.rounds {
+				sum += rand.uint64()
+			}
+			assert(sum != 0)
+			options.count = options.rounds
+			options.processed = options.rounds * options.bytes
+			return
+		},
+		teardown = nil,
+	}
+
+	err := time.benchmark(options, context.allocator)
+	testing.expect(t, err == nil)
+
+	time_per_iter := options.duration / ITERS
+	table.aligned_row_of_values(
+		tbl,
+		.Right,
+		algo_name,
+		table.format(tbl, "uint64"),
+		table.format(tbl, "%8M", time_per_iter),
+		table.format(tbl, "%5.3f MiB/s", options.megabytes_per_second),
+	)
+}
+
+@(private)
+log_table :: proc(tbl: ^table.Table) {
+	sb := strings.builder_make()
+	defer strings.builder_destroy(&sb)
+
+	wr := strings.to_writer(&sb)
+
+	fmt.sbprintln(&sb)
+	table.write_plain_table(wr, tbl)
+
+	log.info(strings.to_string(sb))
 }

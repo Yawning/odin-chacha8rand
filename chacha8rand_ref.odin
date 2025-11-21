@@ -30,132 +30,62 @@ chacha8rand_refill_ref :: proc(r: ^Chacha8Rand_State) {
 
 	dst: [^]u32 = (^u32)(raw_data(r._buf[:]))
 
+	// At least with LLVM21 force_inline produces identical perf to
+	// manual inlining, yay.
+	quarter_round := #force_inline proc "contextless" (a, b, c, d: u32) -> (u32, u32, u32, u32) {
+		a, b, c, d := a, b, c, d
+
+		a += b
+		d ~= a
+		d = rotl(d, 16)
+
+		c += d
+		b ~= c
+		b = rotl(b, 12)
+
+		a += b
+		d ~= a
+		d = rotl(d, 8)
+
+		c += d
+		b ~= c
+		b = rotl(b, 7)
+
+		return a, b, c, d
+	}
+
+	// Filippo Valsorda made an observation that only one of the column
+	// round depends on the counter (s12), so it is worth precomputing
+	// and reusing across multiple blocks.  As far as I know, only Go's
+	// chacha implementation does this.
+
+	p1, p5, p9, p13 := quarter_round(CHACHA_SIGMA_1, s5, s9, s13)
+	p2, p6, p10, p14 := quarter_round(CHACHA_SIGMA_2, s6, s10, s14)
+	p3, p7, p11, p15 := quarter_round(CHACHA_SIGMA_3, s7, s11, s15)
+
 	// 4 groups
 	for g := 0; g < 4; g = g + 1 {
 		// 4 blocks per group
 		for n := 0; n < 4; n = n + 1 {
-			// TODO/perf: Precomputation trickery
-			x0, x1, x2, x3 := CHACHA_SIGMA_0, CHACHA_SIGMA_1, CHACHA_SIGMA_2, CHACHA_SIGMA_3
-			x4, x5, x6, x7 := s4, s5, s6, s7
-			x8, x9, x10, x11 := s8, s9, s10, s11
-			x12, x13, x14, x15 := s12, s13, s14, s15
+			// First column round that depends on the counter
+			p0, p4, p8, p12 := quarter_round(CHACHA_SIGMA_0, s4, s8, s12)
 
-			// 8 rounds, 2 rounds at a time
-			for i := CHACHA_ROUNDS; i > 0; i = i - 2 {
-				// Even when forcing inlining manually inlining all of
-				// these is decently faster.
+			// First diagonal round
+			x0, x5, x10, x15 := quarter_round(p0, p5, p10, p15)
+			x1, x6, x11, x12 := quarter_round(p1, p6, p11, p12)
+			x2, x7, x8, x13 := quarter_round(p2, p7, p8, p13)
+			x3, x4, x9, x14 := quarter_round(p3, p4, p9, p14)
 
-				// quarterround(x, 0, 4, 8, 12)
-				x0 += x4
-				x12 ~= x0
-				x12 = rotl(x12, 16)
-				x8 += x12
-				x4 ~= x8
-				x4 = rotl(x4, 12)
-				x0 += x4
-				x12 ~= x0
-				x12 = rotl(x12, 8)
-				x8 += x12
-				x4 ~= x8
-				x4 = rotl(x4, 7)
+			for i := CHACHA_ROUNDS - 2; i > 0; i = i - 2 {
+				x0, x4, x8, x12 = quarter_round(x0, x4, x8, x12)
+				x1, x5, x9, x13 = quarter_round(x1, x5, x9, x13)
+				x2, x6, x10, x14 = quarter_round(x2, x6, x10, x14)
+				x3, x7, x11, x15 = quarter_round(x3, x7, x11, x15)
 
-				// quarterround(x, 1, 5, 9, 13)
-				x1 += x5
-				x13 ~= x1
-				x13 = rotl(x13, 16)
-				x9 += x13
-				x5 ~= x9
-				x5 = rotl(x5, 12)
-				x1 += x5
-				x13 ~= x1
-				x13 = rotl(x13, 8)
-				x9 += x13
-				x5 ~= x9
-				x5 = rotl(x5, 7)
-
-				// quarterround(x, 2, 6, 10, 14)
-				x2 += x6
-				x14 ~= x2
-				x14 = rotl(x14, 16)
-				x10 += x14
-				x6 ~= x10
-				x6 = rotl(x6, 12)
-				x2 += x6
-				x14 ~= x2
-				x14 = rotl(x14, 8)
-				x10 += x14
-				x6 ~= x10
-				x6 = rotl(x6, 7)
-
-				// quarterround(x, 3, 7, 11, 15)
-				x3 += x7
-				x15 ~= x3
-				x15 = rotl(x15, 16)
-				x11 += x15
-				x7 ~= x11
-				x7 = rotl(x7, 12)
-				x3 += x7
-				x15 ~= x3
-				x15 = rotl(x15, 8)
-				x11 += x15
-				x7 ~= x11
-				x7 = rotl(x7, 7)
-
-				// quarterround(x, 0, 5, 10, 15)
-				x0 += x5
-				x15 ~= x0
-				x15 = rotl(x15, 16)
-				x10 += x15
-				x5 ~= x10
-				x5 = rotl(x5, 12)
-				x0 += x5
-				x15 ~= x0
-				x15 = rotl(x15, 8)
-				x10 += x15
-				x5 ~= x10
-				x5 = rotl(x5, 7)
-
-				// quarterround(x, 1, 6, 11, 12)
-				x1 += x6
-				x12 ~= x1
-				x12 = rotl(x12, 16)
-				x11 += x12
-				x6 ~= x11
-				x6 = rotl(x6, 12)
-				x1 += x6
-				x12 ~= x1
-				x12 = rotl(x12, 8)
-				x11 += x12
-				x6 ~= x11
-				x6 = rotl(x6, 7)
-
-				// quarterround(x, 2, 7, 8, 13)
-				x2 += x7
-				x13 ~= x2
-				x13 = rotl(x13, 16)
-				x8 += x13
-				x7 ~= x8
-				x7 = rotl(x7, 12)
-				x2 += x7
-				x13 ~= x2
-				x13 = rotl(x13, 8)
-				x8 += x13
-				x7 ~= x8
-				x7 = rotl(x7, 7)
-
-				// quarterround(x, 3, 4, 9, 14)
-				x3 += x4
-				x14 ~= x3
-				x14 = rotl(x14, 16)
-				x9 += x14
-				x4 ~= x9
-				x4 = rotl(x4, 12)
-				x3 += x4
-				x14 ~= x3
-				x14 = rotl(x14, 8)
-				x9 += x14
-				x4 ~= x9
-				x4 = rotl(x4, 7)
+				x0, x5, x10, x15 = quarter_round(x0, x5, x10, x15)
+				x1, x6, x11, x12 = quarter_round(x1, x6, x11, x12)
+				x2, x7, x8, x13 = quarter_round(x2, x7, x8, x13)
+				x3, x4, x9, x14 = quarter_round(x3, x4, x9, x14)
 			}
 
 			// Interleave 4 blocks
