@@ -155,8 +155,11 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 chacha8rand_refill :: proc(r: ^Chacha8Rand_State) {
 	assert(r._seeded == true, "chacha8rand/BUG: unseeded refill")
 
-	// TODO: SIMD iff available (bonus points for dynamic dispatch)
-	chacha8rand_refill_ref(r)
+	when runtime.HAS_HARDWARE_SIMD && ODIN_ARCH != .i386 {
+		chacha8rand_refill_simd128(r)
+	} else {
+		chacha8rand_refill_ref(r)
+	}
 
 	r._off = 0
 }
