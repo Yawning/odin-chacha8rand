@@ -29,7 +29,7 @@ import "core:crypto" // For system entropy source.
 // provide suitable functionality in hardware, and the language makes
 // supporting the various SIMD flavors easy.
 
-@(private)
+@(private = "file")
 RNG_SEED_SIZE :: 32
 @(private)
 RNG_OUTPUT_PER_ITER :: 1024 - RNG_SEED_SIZE
@@ -155,6 +155,8 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 chacha8rand_refill :: proc(r: ^Chacha8Rand_State) {
 	assert(r._seeded == true, "chacha8rand/BUG: unseeded refill")
 
+	// i386 has insufficient vector registers to use the
+	// accelerated path at the moment.
 	when runtime.HAS_HARDWARE_SIMD && ODIN_ARCH != .i386 {
 		chacha8rand_refill_simd128(r)
 	} else {
