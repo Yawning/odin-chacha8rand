@@ -29,7 +29,7 @@ import "core:crypto" // For system entropy source.
 // provide suitable functionality in hardware, and the language makes
 // supporting the various SIMD flavors easy.
 
-@(private)
+@(private = "file")
 RNG_SEED_SIZE :: 32
 @(private)
 RNG_OUTPUT_PER_ITER :: 1024 - RNG_SEED_SIZE
@@ -95,11 +95,13 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 
 		p_len := len(p)
 		if p_len == size_of(u64) {
-			// Fast path for a 64-bit destination.
-			src := (^u64)(raw_data(r._buf[r._off:]))
-			intrinsics.unaligned_store((^u64)(raw_data(p)), src^)
-			src^ = 0 // Erasure (backtrack resistance)
-			r._off += 8
+			#no_bounds_check {
+				// Fast path for a 64-bit destination.
+				src := (^u64)(raw_data(r._buf[r._off:]))
+				intrinsics.unaligned_store((^u64)(raw_data(p)), src^)
+				src^ = 0 // Erasure (backtrack resistance)
+				r._off += 8
+			}
 			return
 		}
 
@@ -113,7 +115,7 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 			}
 			rounded_sz := ((sz + 7) / 8) * 8
 			new_off := r._off + rounded_sz
-			if new_off < RNG_OUTPUT_PER_ITER {
+			#no_bounds_check if new_off < RNG_OUTPUT_PER_ITER {
 				// Erasure (backtrack resistance)
 				intrinsics.mem_zero(raw_data(r._buf[r._off:]), rounded_sz)
 				r._off = new_off
@@ -155,6 +157,8 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 chacha8rand_refill :: proc(r: ^Chacha8Rand_State) {
 	assert(r._seeded == true, "chacha8rand/BUG: unseeded refill")
 
+	// i386 has insufficient vector registers to use the
+	// accelerated path at the moment.
 	when runtime.HAS_HARDWARE_SIMD && ODIN_ARCH != .i386 {
 		chacha8rand_refill_simd128(r)
 	} else {

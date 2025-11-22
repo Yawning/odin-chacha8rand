@@ -14,6 +14,8 @@ import "core:time"
 
 @(private = "file")
 ITERS :: 10000000
+@(private = "file")
+ITERS_BULK :: 1000
 
 @(private = "file")
 SAMPLE_SEED : string : "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
@@ -155,7 +157,6 @@ chacha8rand_bytes :: proc(t: ^testing.T) {
 	}
 }
 
-// u64, N[0,1000)
 @(test)
 benchmark_rng :: proc(t: ^testing.T) {
 	runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
@@ -171,9 +172,11 @@ benchmark_rng :: proc(t: ^testing.T) {
 	context.random_generator = chacha8rand_random_generator(&st)
 	rand.reset_bytes(transmute([]byte)(SAMPLE_SEED))
 	_benchmark_u64(t, &tbl, "chacha8rand")
+	_benchmark_large(t, &tbl, "chacha8rand")
 
 	context.random_generator = rand.default_random_generator()
 	_benchmark_u64(t, &tbl, "default")
+	_benchmark_large(t, &tbl, "default")
 
 	log_table(&tbl)
 }
@@ -189,7 +192,7 @@ _benchmark_u64 :: proc(t: ^testing.T, tbl: ^table.Table, algo_name: string) {
 			for _ in 0 ..= options.rounds {
 				sum += rand.uint64()
 			}
-			assert(sum != 0)
+			options.hash = u128(sum)
 			options.count = options.rounds
 			options.processed = options.rounds * options.bytes
 			return
@@ -206,6 +209,40 @@ _benchmark_u64 :: proc(t: ^testing.T, tbl: ^table.Table, algo_name: string) {
 		.Right,
 		algo_name,
 		table.format(tbl, "uint64"),
+		table.format(tbl, "%8M", time_per_iter),
+		table.format(tbl, "%5.3f MiB/s", options.megabytes_per_second),
+	)
+}
+
+@(private = "file")
+_benchmark_large :: proc(t: ^testing.T, tbl: ^table.Table, algo_name: string) {
+	options := &time.Benchmark_Options{
+		rounds = ITERS_BULK,
+		bytes = 1024768,
+		setup = nil,
+		bench = proc(options: ^time.Benchmark_Options, allocator: runtime.Allocator) -> (err: time.Benchmark_Error){
+			n: int
+			for _ in 0 ..= options.rounds {
+				n += rand.read(options.output)
+			}
+			options.hash = u128(n)
+			options.count = options.rounds
+			options.processed = options.rounds * options.bytes
+			return
+		},
+		output = make([]byte, 1024768, context.temp_allocator),
+		teardown = nil,
+	}
+
+	err := time.benchmark(options, context.allocator)
+	testing.expect(t, err == nil)
+
+	time_per_iter := options.duration / ITERS_BULK
+	table.aligned_row_of_values(
+		tbl,
+		.Right,
+		algo_name,
+		table.format(tbl, "1MiB"),
 		table.format(tbl, "%8M", time_per_iter),
 		table.format(tbl, "%5.3f MiB/s", options.megabytes_per_second),
 	)
