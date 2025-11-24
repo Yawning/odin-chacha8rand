@@ -137,12 +137,12 @@ chacha8rand_refill_simd256 :: proc(r: ^Chacha8Rand_State) {
 		// LLVM appears not to consider "this instruction is totally
 		// awful on the given microarchitcture", which leads to
 		// `VPCOMPRESSED` being generated iff AVX512 support is
-		// enabled for `intrinsics.simd_masked_compressed_store`.
+		// enabled for `intrinsics.simd_masked_compress_store`.
 		// On Zen 4, this leads to a 50% performance regression vs
 		// the 128-bit SIMD code.
 		//
-		// The fake intrinsic (because LLVM doesn't appear to have)
-		// an amd64 specific one, doesn't generate `VEXTRACTI128`,
+		// The fake intrinsic (because LLVM doesn't appear to have
+		// an amd64 specific one), doesn't generate `VEXTRACTI128`,
 		// but instead does cleverness without horrible regressions.
 
 		intrinsics.unaligned_store((^u32x4)(dst[0:]), _mm_mm256_extracti128_si256(x0, 0))
