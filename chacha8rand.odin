@@ -76,6 +76,7 @@ chacha8rand_proc :: proc(data: rawptr, mode: runtime.Random_Generator_Mode, p: [
 			if crypto.HAS_RAND_BYTES {
 				crypto.rand_bytes(next_seed)
 				r._off = RNG_OUTPUT_PER_ITER // Force refill.
+				r_seeded = true
 			} else {
 				panic("chacha8rand: no system entropy source")
 			}
